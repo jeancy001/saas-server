@@ -1,0 +1,6 @@
+POST http://localhost:5000/api/v1/clinic/create
+Content-Type: application/json
+
+{
+ "name":"Hope Clinic"
+}
