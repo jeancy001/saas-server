@@ -11,6 +11,7 @@
     "dev": "nodemon index.js"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.99.2",
     "bcryptjs": "^3.0.3",
     "cors": "^2.8.6",
     "dotenv": "^17.3.1",
@@ -18,7 +19,10 @@
     "jsonwebtoken": "^9.0.3",
     "mongodb": "^7.1.0",
     "mongoose": "^9.3.0",
+    "multer": "^2.1.1",
     "nanoid": "^5.1.6",
-    "nodemon": "^3.1.14"
+    "nodemon": "^3.1.14",
+    "slugify": "^1.6.8",
+    "uuid": "^13.0.0"
   }
 }

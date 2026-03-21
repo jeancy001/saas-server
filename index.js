@@ -7,8 +7,8 @@ const PORT =5000
 const app = express()
 
 app.use(cors({origin:"*"}));
-app.use(express.json()); 
-app.use(express.urlencoded({ extended: true }));
+app.use(express.json({ limit: "10mb" }));          // For JSON bodies
+app.use(express.urlencoded({ limit: "10mb", extended: true }))
 
 app.use("/api/v1/clinic",clinicRouter)
 

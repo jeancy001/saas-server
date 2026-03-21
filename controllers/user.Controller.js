@@ -5,7 +5,7 @@ import { generateAccessToken, generateRefreshToken } from "../services/token.js"
 import { sendEmail } from "../utils/mailer.js";
 import { supabase } from "../utils/supabase.js";
 import { generateAndSendOTP, verifyOTP } from "../utils/otpUtils.js";
-
+import { uploadToSupabase } from "../config/storeSupabase.js";
 /**
  * ---------------- TEST ROUTE ----------------
  */

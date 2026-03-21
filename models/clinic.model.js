@@ -5,17 +5,20 @@ const ClinicSchema = new mongoose.Schema(
 {
   name: {
     type: String,
-    required: true
+    required: true,
+    trim: true
   },
 
   logo: {
-    type: String
+    type: String,
+    default: ""
   },
 
   clinicId: {
     type: String,
     unique: true,
-    index: true
+    index: true,
+    lowercase: true
   },
 
   blogContent: {
@@ -30,10 +33,10 @@ const ClinicSchema = new mongoose.Schema(
 );
 
 
-// Auto generate clinicId
-ClinicSchema.pre("save", function () {
+// Auto generate clinicId (no next)
+ClinicSchema.pre("save", async function () {
   if (!this.clinicId) {
-    this.clinicId = nanoid(8);
+    this.clinicId = nanoid(8).toLowerCase();
   }
 });
 

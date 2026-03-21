@@ -4,3 +4,15 @@ Content-Type: application/json
 {
  "name":"Hope Clinic"
 }
+
+###
+GET  http://localhost:5000/api/v1/clinic/
+###
+GET http://localhost:5000/api/v1/clinic/clinic-link/DWOcp6ud
+
+###
+GET  http://localhost:5000/api/v1/clinic/69b90dbcb434e553a6d03507
+
+
+
+API : Application  programming  interface 
