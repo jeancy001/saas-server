@@ -7,15 +7,15 @@ import {
   getMe,
   logout,
   getProfiles,
+  deleteProfile,
   requestCode,
   resetPassword,
-  deleteProfile,
   resendOtp,
   verifyOtp,
   testRoute ,
   refreshAccessToken
 } from "../controllers/user.Controller.js";
-import {protect,authorize} from "../middlewares/auth.middleware.js";
+import {protect} from "../middlewares/auth.middleware.js";
 import { upload } from "../middlewares/upload.js";
 const router = express.Router();
 

@@ -1,0 +1,47 @@
+### =========================
+### CREATE DOCTOR
+### =========================
+POST http://localhost:5000/api/v1/clinic/doctor/
+Content-Type: application/json
+
+{
+  "name": "Dr John Smith",
+  "email": "johnsmith@example.com",
+  "phone": "123456789",
+  "specialty": "Cardiology",
+  "experience": 5,
+  "clinicId": "PUT_VALID_CLINIC_ID_HERE",
+  "availableDays": ["Monday", "Wednesday", "Friday"],
+  "availableHours": {
+    "start": "09:00",
+    "end": "17:00"
+  },
+  "avatar": ""
+}
+
+### =========================
+### GET ALL DOCTORS
+### =========================
+GET http://localhost:5000/api/v1/doctors
+
+### =========================
+### GET SINGLE DOCTOR
+### =========================
+GET http://localhost:5000/api/v1/doctors/PUT_DOCTOR_ID_HERE
+
+### =========================
+### UPDATE DOCTOR
+### =========================
+PUT http://localhost:5000/api/v1/doctors/PUT_DOCTOR_ID_HERE
+Content-Type: application/json
+
+{
+  "name": "Dr John Updated",
+  "experience": 10,
+  "specialty": "Neurology"
+}
+
+### =========================
+### DELETE DOCTOR
+### =========================
+DELETE http://localhost:5000/api/v1/doctors/PUT_DOCTOR_ID_HERE

@@ -1,78 +1,235 @@
-
 import jwt from "jsonwebtoken";
 import { User } from "../models/user.model.js";
-import "dotenv/config";
 
-/* ======================================
-   AUTHENTICATION (ACCESS TOKEN)
-====================================== */
+/**
+ * ---------------- GET TOKEN ----------------
+ */
+const getTokenFromHeader = (req) => {
+  if (req.headers.authorization?.startsWith("Bearer")) {
+    return req.headers.authorization.split(" ")[1];
+  }
+  return null;
+};
+
+/**
+ * ---------------- VERIFY ACCESS TOKEN (STRICT) ----------------
+ */
 export const protect = async (req, res, next) => {
   try {
-    const authHeader = req.headers.authorization;
+    const token = getTokenFromHeader(req);
 
-    // Check if token exists
-    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    if (!token) {
       return res.status(401).json({
         success: false,
-        message: "Not authorized. Access token missing.",
+        message: "Non autorisé.",
       });
     }
 
-    const token = authHeader.split(" ")[1];
+    const decoded = jwt.verify(token, process.env.JWT_ACCESS_SECRET);
 
-    // Verify access token
-    let decoded;
-    try {
-      decoded = jwt.verify(token, process.env.JWT_SECRET || "access_secret");
-    } catch (err) {
-      return res.status(401).json({
-        success: false,
-        message: "Invalid or expired access token.",
-      });
-    }
+    const user = await User.findById(decoded._id).select(
+      "-password -refreshToken"
+    );
 
-    // Find user by decoded._id
-    const user = await User.findById(decoded._id).select("-password");
     if (!user) {
       return res.status(401).json({
         success: false,
-        message: "User not found or deleted.",
+        message: "Utilisateur invalide.",
       });
     }
 
-    // Attach user to request
+    if (!user.active) {
+      return res.status(403).json({
+        success: false,
+        message: "Compte désactivé.",
+      });
+    }
+
     req.user = user;
     next();
-  } catch (err) {
-    console.error("Protect middleware error:", err);
-    return res.status(500).json({
+  } catch (error) {
+    return res.status(401).json({
       success: false,
-      message: "Server error during authentication.",
+      message: "Token invalide.",
     });
   }
 };
 
-/* ======================================
-   AUTHORIZATION (ROLE-BASED)
-====================================== */
+/**
+ * ---------------- OPTIONAL AUTH (FIXED) ----------------
+ * Works for guest + logged users
+ */
+export const optionalAuth = async (req, res, next) => {
+  try {
+    const token = getTokenFromHeader(req);
+
+    if (!token) {
+      req.user = null;
+      return next();
+    }
+
+    const decoded = jwt.verify(token, process.env.JWT_ACCESS_SECRET);
+
+    const user = await User.findById(decoded._id).select(
+      "-password -refreshToken"
+    );
+
+    // ✅ If user exists → attach full user
+    if (user && user.active) {
+      req.user = user;
+    } else {
+      req.user = null;
+    }
+
+    next();
+  } catch (err) {
+    req.user = null; // ✅ never break guest flow
+    next();
+  }
+};
+
+/**
+ * ---------------- ROLE CHECK ----------------
+ */
 export const authorize = (...roles) => {
   return (req, res, next) => {
-    // Ensure user is attached by protect
     if (!req.user) {
       return res.status(401).json({
         success: false,
-        message: "User not authenticated.",
+        message: "Non autorisé.",
       });
     }
 
-    // Check user role
     if (!roles.includes(req.user.role)) {
       return res.status(403).json({
         success: false,
-        message: `Forbidden: requires role(s) [${roles.join(", ")}]`,
+        message: `Accès refusé pour le rôle: ${req.user.role}`,
       });
     }
 
     next();
+  };
+};
+
+/**
+ * ---------------- ROLES ----------------
+ */
+export const isAdmin = authorize("admin");
+export const isDoctor = authorize("doctor");
+export const isStaff = authorize("staff", "admin");
+export const isPatient = authorize("patient");
+
+/**
+ * ---------------- CLINIC ISOLATION ----------------
+ */
+export const sameClinic = (model, field = "clinicId") => {
+  return async (req, res, next) => {
+    try {
+      if (!req.user) {
+        return res.status(401).json({
+          success: false,
+          message: "Non autorisé.",
+        });
+      }
+
+      const resource = await model.findById(req.params.id);
+
+      if (!resource) {
+        return res.status(404).json({
+          success: false,
+          message: "Ressource introuvable.",
+        });
+      }
+
+      if (
+        resource[field]?.toString() !==
+        req.user.clinicId?.toString()
+      ) {
+        return res.status(403).json({
+          success: false,
+          message: "Accès interdit (clinique différente).",
+        });
+      }
+
+      req.resource = resource;
+      next();
+    } catch (error) {
+      res.status(500).json({
+        success: false,
+        message: error.message,
+      });
+    }
+  };
+};
+
+/**
+ * ---------------- OWNER OR ADMIN ----------------
+ */
+export const isOwnerOrAdmin = (field = "userId") => {
+  return (req, res, next) => {
+    if (!req.user) {
+      return res.status(401).json({
+        success: false,
+        message: "Non autorisé.",
+      });
+    }
+
+    if (
+      req.user.role === "admin" ||
+      req.resource?.[field]?.toString() === req.user._id.toString()
+    ) {
+      return next();
+    }
+
+    return res.status(403).json({
+      success: false,
+      message: "Accès refusé (propriétaire uniquement).",
+    });
+  };
+};
+
+/**
+ * ---------------- DOCTOR OR ADMIN ----------------
+ */
+export const isDoctorOrAdmin = () => {
+  return (req, res, next) => {
+    if (!req.user) {
+      return res.status(401).json({
+        success: false,
+        message: "Non autorisé.",
+      });
+    }
+
+    if (["doctor", "admin"].includes(req.user.role)) {
+      return next();
+    }
+
+    return res.status(403).json({
+      success: false,
+      message: "Accès réservé au médecin ou admin.",
+    });
+  };
+};
+
+/**
+ * ---------------- STAFF OR ADMIN ----------------
+ */
+export const isStaffOrAdmin = () => {
+  return (req, res, next) => {
+    if (!req.user) {
+      return res.status(401).json({
+        success: false,
+        message: "Non autorisé.",
+      });
+    }
+
+    if (["staff", "admin"].includes(req.user.role)) {
+      return next();
+    }
+
+    return res.status(403).json({
+      success: false,
+      message: "Accès réservé au staff.",
+    });
   };
 };

@@ -7,12 +7,56 @@ Content-Type: application/json
 
 ###
 GET  http://localhost:5000/api/v1/clinic/
+
+
+##register 
+POST http://localhost:5000/api/v1/auth/register
+Content-Type: application/json
+
+{
+  "username": "john",
+  "email": "john@test.com",
+  "password": "123456",
+  "clinicId": "65f1c2e8a1b23c0012345678",
+  "gender": "male",
+  "tel": "0999999999",
+  "country": "DRC",
+  "city": "Kinshasa"
+}
 ###
 GET http://localhost:5000/api/v1/clinic/clinic-link/DWOcp6ud
 
 ###
 GET  http://localhost:5000/api/v1/clinic/69b90dbcb434e553a6d03507
 
+###create appointment to a clinic
+POST http://localhost:5000/api/v1/clinic/
+Content-Type: application/json
 
+{
+  "clinicId": "65f1c123abc123abc123abc1",
+  "motifVisite": "Consultation générale",
+  "examens": "Aucun",
 
-API : Application  programming  interface 
+  "patient": {
+    "prenom": "Jean",
+    "nom": "Mpoyi",
+    "postNom": "Kalala",
+    "sexe": "M",
+    "telephone": "0999999999",
+    "dateNaissance": "2000-01-01",
+    "etatCivil": "Célibataire",
+    "occupation": "Étudiant",
+    "adresse": "Kinshasa",
+    "email": "jean@example.com"
+  },
+
+  "contactUrgence": {
+    "relation": "parent",
+    "nom": "Marie",
+    "telephone": "0888888888"
+  },
+
+  "dateRendezVous": "2026-04-01T10:00:00.000Z"
+}
+

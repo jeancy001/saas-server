@@ -4,6 +4,9 @@ import cors from "cors";
 
 import { clinicRouter } from "./routes/clinic.route.js";
 import { connectDB } from "./config/db.js";
+import { appointementRoutes } from "./routes/appointement.route.js";
+import { userRoutes } from "./routes/user.route.js";
+import { doctorRouter } from "./routes/doctor.route.js";
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -51,6 +54,9 @@ app.get("/health", async (req, res) => {
 
 // ✅ API routes
 app.use("/api/v1/clinic", clinicRouter);
+app.use("/api/v1/clinic/appointment", appointementRoutes);
+app.use("/api/v1/clinic/doctor", doctorRouter);
+app.use("/api/v1/auth",userRoutes);
 
 /* ----------------------------- */
 /* ERROR HANDLER */

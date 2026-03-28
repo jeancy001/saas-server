@@ -1,111 +1,197 @@
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
+import mongoose from "mongoose";
+
 import { User } from "../models/user.model.js";
+import { Clinic } from "../models/clinic.model.js";
+
 import { generateAccessToken, generateRefreshToken } from "../services/token.js";
 import { sendEmail } from "../utils/mailer.js";
-import { supabase } from "../utils/supabase.js";
 import { generateAndSendOTP, verifyOTP } from "../utils/otpUtils.js";
-import { uploadToSupabase } from "../config/storeSupabase.js";
-/**
- * ---------------- TEST ROUTE ----------------
- */
-export const testRoute = async (req, res) => {
-  try {
-    res.status(200).json({
-      success: true,
-      message: "API fonctionne correctement!",
-      timestamp: new Date().toISOString(),
-      environment: process.env.NODE_ENV || "development",
-    });
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
-  }
+import { supabase } from "../utils/supabase.js";
+
+/* ---------------- SAFE SHAPES ---------------- */
+
+const sanitizeClinic = (clinic) => {
+  if (!clinic) return null;
+
+  const isPopulated =
+    typeof clinic === "object" && clinic._id;
+
+  return {
+    _id: isPopulated ? clinic._id : clinic,
+    name: clinic?.name || null,
+    clinicId: clinic?.clinicId || null,
+    logo: clinic?.logo || null,
+  };
 };
 
-/**
- * ---------------- REGISTER ----------------
- */
+const sanitizeUser = (user) => {
+  const clinic = user.clinicId;
+
+  const isPopulated =
+    clinic && typeof clinic === "object" && clinic._id;
+
+  return {
+    _id: user._id,
+    username: user.username,
+    email: user.email,
+    role: user.role,
+
+    // unified safe exposure
+    clinicId: isPopulated ? clinic._id : clinic || null,
+
+    clinic: isPopulated
+      ? {
+          _id: clinic._id,
+          name: clinic.name,
+          clinicId: clinic.clinicId,
+          logo: clinic.logo || null,
+        }
+      : null,
+
+    profileUrl: user.profileUrl || null,
+    isVerified: user.isVerified,
+  };
+};
+
+/* ---------------- HELPERS ---------------- */
+
+const resolveClinic = async (clinicId) => {
+  if (!clinicId) return null;
+
+  const query = mongoose.Types.ObjectId.isValid(clinicId)
+    ? { _id: clinicId }
+    : { clinicId: clinicId.toLowerCase() };
+
+  return Clinic.findOne(query);
+};
+
+/* ---------------- TEST ---------------- */
+
+export const testRoute = async (req, res) => {
+  res.status(200).json({ success: true });
+};
+
+/* ---------------- REGISTER ---------------- */
+
 export const register = async (req, res) => {
   try {
-    const { username, email, password,  gender, tel } = req.body;
+    const {
+      username,
+      email,
+      password,
+      gender,
+      tel,
+      country,
+      city,
+      clinicId,
+    } = req.body;
 
-    if (!email || !password) return res.status(400).json({ success: false, message: "Email et mot de passe requis." });
+    if (!email || !password || !clinicId) {
+      return res.status(400).json({
+        success: false,
+        message: "Email, password and clinic required.",
+      });
+    }
+
+    const clinic = await resolveClinic(clinicId);
+
+    if (!clinic) {
+      return res.status(404).json({
+        success: false,
+        message: "Clinic not found.",
+      });
+    }
 
     const existUser = await User.findOne({ email });
-    if (existUser) return res.status(409).json({ success: false, message: "Utilisateur existe déjà." });
+
+    if (existUser) {
+      return res.status(409).json({
+        success: false,
+        message: "User already exists.",
+      });
+    }
 
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    const newUser = new User({
-      username: username || "",
+    const newUser = await User.create({
+      username,
       email,
       password: hashedPassword,
-      country: country || "",
-      city: city || "",
-      gender: gender || "",
-      tel: tel || "",
+      gender,
+      tel,
+      country,
+      city,
+      clinicId: clinic._id,
     });
 
-    await newUser.save();
-
-    // Send OTP for verification
     await generateAndSendOTP(email, "registration");
 
-    res.status(201).json({
+    const populated = await newUser.populate("clinicId");
+
+    return res.status(201).json({
       success: true,
-      message: "Utilisateur enregistré avec succès. Vérifiez votre email.",
-      user: { id: newUser._id, username: newUser.username, email: newUser.email },
+      message: "User created. Verify email.",
+      user: sanitizeUser(populated),
     });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    return res.status(500).json({ success: false, message: error.message });
   }
 };
 
-/**
- * ---------------- LOGIN ----------------
- */
+/* ---------------- LOGIN ---------------- */
+
 export const userLogin = async (req, res) => {
   try {
     const { email, password } = req.body;
-    if (!email || !password)
-      return res.status(400).json({ success: false, message: "Email et mot de passe requis." });
 
-    let user;
-    try {
-      user = await User.findOne({ email }).select("+password");
-    } catch (dbErr) {
-      console.error("DB error:", dbErr);
-      return res.status(500).json({ success: false, message: "Erreur base de données." });
+    if (!email || !password) {
+      return res.status(400).json({
+        success: false,
+        message: "Email and password required.",
+      });
     }
 
-    if (!user) return res.status(404).json({ success: false, message: "Utilisateur non trouvé." });
+    const user = await User.findOne({ email })
+      .select("+password")
+      .populate("clinicId");
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found.",
+      });
+    }
 
     const isMatch = await bcrypt.compare(password, user.password);
-    if (!isMatch) return res.status(401).json({ success: false, message: "Mot de passe incorrect." });
+
+    if (!isMatch) {
+      return res.status(401).json({
+        success: false,
+        message: "Invalid password.",
+      });
+    }
+
+    // DO NOT BLOCK LOGIN IF CLINIC IS MISSING
+    if (!user.clinicId) {
+      console.warn("User missing clinicId:", user.email);
+    }
 
     if (!user.isVerified) {
-      try {
-        await generateAndSendOTP(email, "login");
-      } catch (otpErr) {
-        console.error("OTP error:", otpErr);
-      }
-      return res.status(403).json({ success: false, message: "Compte non vérifié. OTP envoyé." });
+      await generateAndSendOTP(email, "login");
+
+      return res.status(403).json({
+        success: false,
+        message: "Account not verified. OTP sent.",
+      });
     }
 
-    let accessToken, refreshToken;
-    try {
-      accessToken = generateAccessToken(user);
-      refreshToken = generateRefreshToken(user);
-    } catch (jwtErr) {
-      console.error("JWT error:", jwtErr);
-      return res.status(500).json({ success: false, message: "Erreur génération token." });
-    }
+    const accessToken = generateAccessToken(user);
+    const refreshToken = generateRefreshToken(user);
 
-    try {
-      await User.findByIdAndUpdate(user._id, { refreshToken });
-    } catch (updateErr) {
-      console.error("Update token error:", updateErr);
-    }
+    user.refreshToken = refreshToken;
+    await user.save();
 
     res.cookie("refreshToken", refreshToken, {
       httpOnly: true,
@@ -114,180 +200,178 @@ export const userLogin = async (req, res) => {
       maxAge: 7 * 24 * 60 * 60 * 1000,
     });
 
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
-      message: "Connexion réussie.",
       accessToken,
-      user: { id: user._id, username: user.username, email: user.email },
+      user: sanitizeUser(user),
     });
   } catch (error) {
-    console.error("Unexpected login error:", error);
-    res.status(500).json({ success: false, message: error.message });
+    return res.status(500).json({ success: false, message: error.message });
   }
 };
 
-/**
- * ---------------- LOGOUT ----------------
- */
-export const logout = async (req, res) => {
-  try {
-    const refreshToken = req.cookies.refreshToken;
+/* ---------------- GET ME ---------------- */
 
-    if (refreshToken) {
-      try {
-        // Verify refresh token
-        const decoded = jwt.verify(refreshToken, process.env.JWT_REFRESH_SECRET || "refresh_secret");
-
-        // Remove refresh token from DB
-        await User.findByIdAndUpdate(decoded._id, { refreshToken: null });
-      } catch (err) {
-        // Token invalid or expired, ignore database update
-        console.warn("Invalid refresh token during logout:", err.message);
-      }
-    }
-
-    // Clear the refresh token cookie
-    res.clearCookie("refreshToken", {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "strict",
-      path: "/", // make sure path matches where cookie was set
-    });
-
-    return res.status(200).json({ success: true, message: "Logout successful." });
-  } catch (error) {
-    console.error("Logout error:", error.message);
-    return res.status(500).json({ success: false, message: "Server error during logout." });
-  }
-};
-
-/**
- * ---------------- GET ME ----------------
- */
 export const getMe = async (req, res) => {
   try {
-    const user = await User.findById(req.user._id).select("-password");
-    if (!user) return res.status(404).json({ success: false, message: "Utilisateur non trouvé." });
+    const user = await User.findById(req.user._id)
+      .select("-password -refreshToken")
+      .populate("clinicId");
 
-    res.status(200).json({ success: true, user });
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
-  }
-};
-
-/**
- * ---------------- UPDATE PROFILE ----------------
- */
-export const updateProfile = async (req, res) => {
-  try {
-    const updates = req.body;
-    const profileImage = req.file;
-
-    if (profileImage) {
-      const { data, error } = await supabase.storage
-        .from("profile-images")
-        .upload(`users/${Date.now()}_${profileImage.originalname}`, profileImage.buffer, {
-          cacheControl: "3600",
-          upsert: true,
-          contentType: profileImage.mimetype,
-        });
-
-      if (error) return res.status(500).json({ success: false, message: "Supabase upload failed", error });
-
-      updates.profileUrl = `${process.env.SUPABASE_URL}/storage/v1/object/public/profile-images/${data.path}`;
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found.",
+      });
     }
 
-    const user = await User.findByIdAndUpdate(req.user._id, updates, { new: true }).select("-password");
-    res.status(200).json({ success: true, message: "Profil mis à jour.", user });
+    return res.status(200).json({
+      success: true,
+      user: sanitizeUser(user),
+    });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    return res.status(500).json({ success: false, message: error.message });
   }
 };
 
-/**
- * ---------------- UPDATE PASSWORD ----------------
- */
+/* ---------------- GET PROFILES ---------------- */
+
+export const getProfiles = async (req, res) => {
+  try {
+    if (!req.user?.clinicId) {
+      return res.status(403).json({
+        success: false,
+        message: "Clinic context missing.",
+      });
+    }
+
+    const users = await User.find({ clinicId: req.user.clinicId })
+      .select("-password -refreshToken")
+      .populate("clinicId");
+
+    return res.status(200).json({
+      success: true,
+      count: users.length,
+      users: users.map(sanitizeUser),
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+/* ---------------- UPDATE PROFILE ---------------- */
+
+export const updateProfile = async (req, res) => {
+  try {
+    const allowed = ["username", "tel", "country", "city", "gender"];
+    const updates = {};
+
+    allowed.forEach((f) => {
+      if (req.body[f] !== undefined) updates[f] = req.body[f];
+    });
+
+    if (req.file) {
+      const filePath = `users/${Date.now()}_${req.file.originalname}`;
+
+      const { data, error } = await supabase.storage
+        .from("profile-images")
+        .upload(filePath, req.file.buffer, {
+          contentType: req.file.mimetype,
+          upsert: true,
+        });
+
+      if (error) {
+        return res.status(500).json({
+          success: false,
+          message: "Upload failed",
+        });
+      }
+
+      updates.profileUrl =
+        `${process.env.SUPABASE_URL}/storage/v1/object/public/profile-images/${data.path}`;
+    }
+
+    const user = await User.findByIdAndUpdate(req.user._id, updates, {
+      new: true,
+    })
+      .select("-password -refreshToken")
+      .populate("clinicId");
+
+    return res.status(200).json({
+      success: true,
+      user: sanitizeUser(user),
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+/* ---------------- UPDATE PASSWORD ---------------- */
+
 export const updatePassword = async (req, res) => {
   try {
     const { currentPassword, newPassword } = req.body;
+
     const user = await User.findById(req.user._id).select("+password");
-    if (!user) return res.status(404).json({ success: false, message: "Utilisateur non trouvé." });
 
     const isMatch = await bcrypt.compare(currentPassword, user.password);
-    if (!isMatch) return res.status(401).json({ success: false, message: "Mot de passe actuel incorrect." });
+
+    if (!isMatch) {
+      return res.status(401).json({
+        success: false,
+        message: "Invalid password.",
+      });
+    }
 
     user.password = await bcrypt.hash(newPassword, 10);
     await user.save();
 
-    await sendEmail(user.email, "Mot de passe modifié", `<p>Bonjour ${user.username || ""},</p><p>Votre mot de passe a été modifié.</p>`);
+    await sendEmail(user.email, "Password updated", "Your password was changed.");
 
-    res.status(200).json({ success: true, message: "Mot de passe changé avec succès." });
+    return res.status(200).json({ success: true });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    return res.status(500).json({ success: false, message: error.message });
   }
 };
 
-/**
- * ---------------- REQUEST RESET CODE ----------------
- */
-export const requestCode = async (req, res) => {
-  try {
-    const { email } = req.body;
-    const ip = req.ip || req.connection.remoteAddress || "unknown";
+/* ---------------- RESET PASSWORD ---------------- */
 
-    const result = await generateAndSendOTP(email, "password_reset", ip);
-    if (!result.success) return res.status(404).json({ success: false, message: result.message });
-
-    res.status(200).json({ success: true, message: "Code envoyé à l'email.", expiresAt: result.otpExpiry });
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
-  }
-};
-
-/**
- * ---------------- RESET PASSWORD ----------------
- */
 export const resetPassword = async (req, res) => {
   try {
     const { email, code, newPassword } = req.body;
-    const ip = req.ip || req.connection.remoteAddress || "unknown";
 
-    if (!email || !code || !newPassword) return res.status(400).json({ success: false, message: "Email, code et nouveau mot de passe requis." });
+    const result = await verifyOTP(email, code, "password_reset", req.ip);
 
-    const otpResult = await verifyOTP(email, code, "password_reset", ip);
-    if (!otpResult.success) return res.status(400).json({ success: false, message: otpResult.message });
+    if (!result.success) {
+      return res.status(400).json(result);
+    }
 
-    const user = otpResult.user;
+    const user = result.user;
+
     user.password = await bcrypt.hash(newPassword, 10);
-
-    // Reset OTP fields
     user.otpCode = undefined;
     user.otpExpiry = undefined;
     user.otpAttempts = 0;
-    user.otpLockUntil = undefined;
 
     await user.save();
 
-    await sendEmail(user.email, "Mot de passe modifié", `<p>Bonjour ${user.username || ""},</p><p>Votre mot de passe a été modifié.</p>`);
-
-    res.status(200).json({ success: true, message: "Mot de passe réinitialisé avec succès." });
+    return res.status(200).json({ success: true });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    return res.status(500).json({ success: false, message: error.message });
   }
 };
 
-/**
- * ---------------- VERIFY OTP ----------------
- */
+/* ---------------- VERIFY OTP ---------------- */
+
 export const verifyOtp = async (req, res) => {
   try {
-    const { email, otpCode, context = "verification" } = req.body;
-    const ip = req.ip || req.connection.remoteAddress || "unknown";
+    const { email, otpCode, context } = req.body;
 
-    if (!email || !otpCode) return res.status(400).json({ success: false, message: "Email et code OTP requis." });
+    const result = await verifyOTP(email, otpCode, context, req.ip);
 
-    const result = await verifyOTP(email, otpCode, context, ip);
-    if (!result.success) return res.status(400).json({ success: false, message: result.message });
+    if (!result.success) {
+      return res.status(400).json(result);
+    }
 
     const user = result.user;
 
@@ -296,75 +380,125 @@ export const verifyOtp = async (req, res) => {
       user.otpCode = undefined;
       user.otpExpiry = undefined;
       user.otpAttempts = 0;
+      await user.save();
     }
 
-    await user.save();
+    return res.status(200).json({ success: true });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
 
-    res.status(200).json({
+/* ---------------- REQUEST CODE ---------------- */
+
+export const requestCode = async (req, res) => {
+  try {
+    const { email, context } = req.body;
+
+    await generateAndSendOTP(email, context || "general");
+
+    return res.status(200).json({
       success: true,
-      message: context === "password_reset" ? "Code vérifié." : "Compte vérifié.",
+      message: "Code sent.",
     });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    return res.status(500).json({ success: false, message: error.message });
   }
 };
 
-/**
- * ---------------- RESEND OTP ----------------
- */
+/* ---------------- RESEND OTP ---------------- */
+
 export const resendOtp = async (req, res) => {
   try {
-    const { email, context = "verification" } = req.body;
-    if (!email) return res.status(400).json({ success: false, message: "Email requis." });
+    const { email, context } = req.body;
 
-    const result = await generateAndSendOTP(email, context, req.ip);
-    if (!result.success) return res.status(404).json({ success: false, message: result.message });
+    await generateAndSendOTP(email, context || "general");
 
-    res.status(200).json({ success: true, message: "OTP renvoyé.", expiresAt: result.otpExpiry });
+    return res.status(200).json({
+      success: true,
+      message: "OTP resent.",
+    });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    return res.status(500).json({ success: false, message: error.message });
   }
 };
 
-/**
- * ---------------- REFRESH TOKEN ----------------
- */
+/* ---------------- REFRESH TOKEN ---------------- */
+
 export const refreshAccessToken = async (req, res) => {
   try {
-    const refreshToken = req.cookies.refreshToken;
-    if (!refreshToken) return res.status(401).json({ success: false, message: "Token manquant." });
+    const token = req.cookies.refreshToken;
+    if (!token) return res.status(401).json({ success: false });
 
-    const decoded = jwt.verify(refreshToken, process.env.JWT_REFRESH_SECRET);
+    const decoded = jwt.verify(token, process.env.JWT_REFRESH_SECRET);
+
     const user = await User.findById(decoded._id);
-    if (!user || user.refreshToken !== refreshToken) return res.status(403).json({ success: false, message: "Token invalide." });
+
+    if (!user || user.refreshToken !== token) {
+      return res.status(403).json({ success: false });
+    }
 
     const accessToken = generateAccessToken(user);
-    res.status(200).json({ success: true, accessToken });
-  } catch (error) {
-    res.status(403).json({ success: false, message: "Token expiré ou invalide." });
+
+    return res.status(200).json({
+      success: true,
+      accessToken,
+    });
+  } catch {
+    return res.status(403).json({ success: false });
   }
 };
 
-/**
- * ---------------- GET ALL USERS ----------------
- */
-export const getProfiles = async (req, res) => {
+/* ---------------- LOGOUT ---------------- */
+
+export const logout = async (req, res) => {
   try {
-    const users = await User.find().select("-password");
-    res.status(200).json({ success: true, users });
+    const token = req.cookies.refreshToken;
+
+    if (token) {
+      try {
+        const decoded = jwt.verify(token, process.env.JWT_REFRESH_SECRET);
+
+        await User.findByIdAndUpdate(decoded._id, {
+          refreshToken: null,
+        });
+      } catch {}
+    }
+
+    res.clearCookie("refreshToken", {
+      httpOnly: true,
+      sameSite: "strict",
+      secure: process.env.NODE_ENV === "production",
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: "Logout successful",
+    });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    return res.status(500).json({ success: false, message: error.message });
   }
 };
 
-/**
- * ---------------- DELETE USER ----------------
- */
+/* ---------------- DELETE PROFILE ---------------- */
+
 export const deleteProfile = async (req, res) => {
   try {
-    await User.findByIdAndDelete(req.params.id);
-    res.status(200).json({ success: true, message: "Profil supprimé." });
+    const user = await User.findByIdAndDelete(req.user._id);
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found.",
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: "Profile deleted.",
+    });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    return res.status(500).json({ success: false, message: error.message });
   }
 };
+

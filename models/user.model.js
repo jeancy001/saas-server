@@ -1,14 +1,69 @@
-
 import mongoose from "mongoose";
 
-const UserSchema = new mongoose.Schema({
-  email: { type: String, required: true, unique: true },
-  username: { type: String, required: true },
-  clinicId: { type: String, required: true },
+const userSchema = new mongoose.Schema(
+  {
+    name: { type: String, trim: true },
+    username: { type: String },
 
-  role: { type: String, enum: ["admin", "staff","patient","doctor","medencine"], default: "staff" },
-  password: { type: String, required: true },
-  createdAt: { type: Date, default: Date.now },
-});
+    email: {
+      type: String,
+      required: [true, "Email is required"],
+      unique: true,
+      lowercase: true,
+      match: [
+        /^\w+([\.-]?\w+)*@\w+([\.-]?\w+)*(\.\w{2,3})+$/,
+        "Please provide a valid email",
+      ],
+    },
 
-export const User = mongoose.model("User", UserSchema);
+    clinicId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Clinic",
+      required: true,
+    },
+
+    password: {
+      type: String,
+      required: [true, "Password is required"],
+      minlength: 6,
+    },
+
+    country: String,
+    city: String,
+    gender: String,
+    profileUrl: String,
+    tel: String,
+
+    address: [
+      {
+        ville: String,
+        pays: String,
+      },
+    ],
+
+    // ✅ FIXED ROLE
+    role: {
+      type: String,
+      enum: ["admin", "staff", "patient", "doctor", "medicine"],
+      default: "patient",
+    },
+
+    isVerified: { type: Boolean, default: false },
+
+    otpCode: String,
+    otpExpiry: Date,
+    otpAttempts: { type: Number, default: 0 },
+    otpLockUntil: Date,
+    otpLastAction: String,
+    otpLastIp: String,
+
+    refreshToken: String,
+    resetCode: String,
+    resetCodeExpire: Date,
+
+    active: { type: Boolean, default: true },
+  },
+  { timestamps: true }
+);
+
+export const User = mongoose.model("User", userSchema);

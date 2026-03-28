@@ -1,18 +1,23 @@
-// clinic.controller.js
 import mongoose from "mongoose";
 import { Clinic } from "../models/clinic.model.js";
-import { connectDB } from "../config/db.js";
 
 const BASE_URL =
   process.env.CLINIC_BASE_URL || "http://localhost:3000/clinic/";
 
 /* ----------------------------- */
-/* HELPER */
+/* FORMAT RESPONSE */
 /* ----------------------------- */
 const formatClinic = (clinic) => {
   const obj = clinic.toObject();
+
   return {
-    ...obj,
+    _id: obj._id,
+    name: obj.name,
+    clinicId: obj.clinicId,
+    logo: obj.logo || null,
+    blogContent: obj.blogContent || null,
+    createdAt: obj.createdAt,
+    updatedAt: obj.updatedAt,
     clinicLink: `${BASE_URL}${obj.clinicId}`,
   };
 };
@@ -22,9 +27,7 @@ const formatClinic = (clinic) => {
 /* ----------------------------- */
 export const createClinic = async (req, res) => {
   try {
-    await connectDB(); // ✅ FIX
-
-    const { name, email, phone, blogContent, logo } = req.body;
+    const { name, blogContent, logo } = req.body;
 
     if (!name?.trim()) {
       return res.status(400).json({
@@ -43,8 +46,6 @@ export const createClinic = async (req, res) => {
 
     const clinic = await Clinic.create({
       name: name.trim(),
-      email,
-      phone,
       logo: logoUrl,
       blogContent,
     });
@@ -54,7 +55,6 @@ export const createClinic = async (req, res) => {
       data: formatClinic(clinic),
     });
   } catch (error) {
-    console.error("❌ Create clinic error:", error);
     return res.status(500).json({
       success: false,
       message: "Failed to create clinic",
@@ -68,8 +68,6 @@ export const createClinic = async (req, res) => {
 /* ----------------------------- */
 export const updateClinic = async (req, res) => {
   try {
-    await connectDB(); // ✅ FIX
-
     const { id } = req.params;
 
     if (!mongoose.Types.ObjectId.isValid(id)) {
@@ -104,7 +102,6 @@ export const updateClinic = async (req, res) => {
       data: formatClinic(clinic),
     });
   } catch (error) {
-    console.error("❌ Update clinic error:", error);
     return res.status(500).json({
       success: false,
       message: "Failed to update clinic",
@@ -118,8 +115,6 @@ export const updateClinic = async (req, res) => {
 /* ----------------------------- */
 export const getClinics = async (req, res) => {
   try {
-    await connectDB(); // ✅ FIX
-
     const clinics = await Clinic.find().sort({ createdAt: -1 });
 
     return res.status(200).json({
@@ -128,7 +123,6 @@ export const getClinics = async (req, res) => {
       data: clinics.map(formatClinic),
     });
   } catch (error) {
-    console.error("❌ Get clinics error:", error);
     return res.status(500).json({
       success: false,
       message: "Failed to fetch clinics",
@@ -142,8 +136,6 @@ export const getClinics = async (req, res) => {
 /* ----------------------------- */
 export const getClinicById = async (req, res) => {
   try {
-    await connectDB(); // ✅ FIX
-
     const { id } = req.params;
 
     if (!mongoose.Types.ObjectId.isValid(id)) {
@@ -167,7 +159,6 @@ export const getClinicById = async (req, res) => {
       data: formatClinic(clinic),
     });
   } catch (error) {
-    console.error("❌ Get clinic by ID error:", error);
     return res.status(500).json({
       success: false,
       message: "Failed to fetch clinic",
@@ -177,12 +168,10 @@ export const getClinicById = async (req, res) => {
 };
 
 /* ----------------------------- */
-/* GET CLINIC BY clinicId */
+/* GET BY PUBLIC clinicId */
 /* ----------------------------- */
 export const getClinicByClinicId = async (req, res) => {
   try {
-    await connectDB(); // ✅ FIX
-
     const { clinicId } = req.params;
 
     const clinic = await Clinic.findOne({ clinicId });
@@ -199,7 +188,6 @@ export const getClinicByClinicId = async (req, res) => {
       data: formatClinic(clinic),
     });
   } catch (error) {
-    console.error("❌ Get clinic by clinicId error:", error);
     return res.status(500).json({
       success: false,
       message: "Failed to fetch clinic",
@@ -213,8 +201,6 @@ export const getClinicByClinicId = async (req, res) => {
 /* ----------------------------- */
 export const deleteClinic = async (req, res) => {
   try {
-    await connectDB(); // ✅ FIX
-
     const { id } = req.params;
 
     if (!mongoose.Types.ObjectId.isValid(id)) {
@@ -238,7 +224,6 @@ export const deleteClinic = async (req, res) => {
       message: "Clinic deleted successfully",
     });
   } catch (error) {
-    console.error("❌ Delete clinic error:", error);
     return res.status(500).json({
       success: false,
       message: "Failed to delete clinic",

@@ -1,108 +1,53 @@
-const mongoose = require("mongoose");
+import mongoose from "mongoose";
 
 const appointmentSchema = new mongoose.Schema(
-{
-  clinicId: {
-    type: String,
-    required: true
-  },
-
-  motifVisite: {
-    type: String,
-    required: true
-  },
-
-  examens: {
-    type: String
-  },
-
-  patient: {
-    prenom: {
-      type: String,
-      required: true
+  {
+    clinicId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Clinic",
+      required: true,
     },
 
-    nom: {
-      type: String,
-      required: true
+    userId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      required: false, // ✅ optional (guest support)
     },
 
-    postNom: {
-      type: String,
-      required: true
+    doctorId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Doctor",
+      default: null,
     },
 
-    sexe: {
-      type: String,
-      enum: ["M", "F"],
-      required: true
+    // ✅ Guest info
+    guest: {
+      name: String,
+      email: String,
+      phone: String,
     },
 
-    telephone: {
+    motif: {
       type: String,
-      required: true
+      required: true,
+      trim: true,
     },
 
-    dateNaissance: {
+    date: {
       type: Date,
-      required: true
+      required: true,
     },
 
-    etatCivil: {
+    status: {
       type: String,
-      enum: ["Marié(e)", "Célibataire", "Veuf(ve)", "Divorcé(e)"],
-      required: true
+      enum: ["pending", "confirmed", "cancelled"],
+      default: "pending",
     },
-
-    occupation: {
-      type: String,
-      required: true
-    },
-
-    adresse: {
-      type: String,
-      required: true
-    },
-
-    email: {
-      type: String,
-      required: true
-    }
   },
-
-  contactUrgence: {
-    relation: {
-      type: String,
-      enum: ["parent", "Epoux(se)", "Other"],
-      required: true
-    },
-
-    nom: {
-      type: String,
-      required: true
-    },
-
-    telephone: {
-      type: String,
-      required: true
-    }
-  },
-
-  dateRendezVous: {
-    type: Date,
-    default: Date.now
-  },
-
-  statut: {
-    type: String,
-    enum: ["pending", "confirmed", "cancelled", "completed"],
-    default: "pending"
-  }
-
-},
-{
-  timestamps: true
-}
+  { timestamps: true }
 );
 
-module.exports = mongoose.model("Appointment", appointmentSchema);
+export const Appointment = mongoose.model(
+  "Appointment",
+  appointmentSchema
+);
