@@ -12,7 +12,6 @@ import {
   resetPassword,
   resendOtp,
   verifyOtp,
-  testRoute ,
   refreshAccessToken
 } from "../controllers/user.Controller.js";
 import {protect} from "../middlewares/auth.middleware.js";
@@ -20,7 +19,6 @@ import { upload } from "../middlewares/upload.js";
 const router = express.Router();
 
 
-router.get("/test", testRoute);
 //routes Public
 router.post("/register", register);
 router.post("/login", userLogin);

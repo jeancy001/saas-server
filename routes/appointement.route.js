@@ -7,20 +7,48 @@ import {
   deleteAppointment,
 } from "../controllers/appointment.controller.js";
 
-import { protect ,optionalAuth} from "../middlewares/auth.middleware.js"
+import { protect, optionalAuth } from "../middlewares/auth.middleware.js";
+import { resolveClinic } from "../middlewares/resolveClinic.middleware.js";
 
 const router = express.Router();
 
-// ✅ guest + user
-router.post("/", optionalAuth, createAppointment);
+/* ---------------- CREATE APPOINTMENT (guest + user) ---------------- */
+router.post(
+  "/:clinicId",
+  optionalAuth,
+  resolveClinic,
+  createAppointment
+);
 
-// ✅ only logged users
-router.get("/my", protect, getMyAppointments);
+/* ---------------- GET MY APPOINTMENTS ---------------- */
+router.get(
+  "/my",
+  protect,
+  getMyAppointments
+);
 
-// ✅ clinic admin
-router.get("/clinic/:clinicId", protect, getClinicAppointments);
+/* ---------------- GET CLINIC APPOINTMENTS (ADMIN) ---------------- */
+router.get(
+  "/:clinicId/admin",
+  protect,
+  resolveClinic,
+  getClinicAppointments
+);
 
-router.put("/:id/status", protect, updateAppointmentStatus);
-router.delete("/:id", protect, deleteAppointment);
+/* ---------------- UPDATE STATUS ---------------- */
+router.put(
+  "/:clinicId/:id/status",
+  protect,
+  resolveClinic,
+  updateAppointmentStatus
+);
 
-export {router as  appointementRoutes};
+/* ---------------- DELETE APPOINTMENT ---------------- */
+router.delete(
+  "/:clinicId/:id",
+  protect,
+  resolveClinic,
+  deleteAppointment
+);
+
+export { router as appointmentRoutes };

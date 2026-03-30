@@ -2,25 +2,23 @@ import mongoose from "mongoose";
 
 const appointmentSchema = new mongoose.Schema(
   {
-    clinicId: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "Clinic",
-      required: true,
-    },
+clinicId: {
+  type: String,
+  required: true,
+  index: true,
+},
 
     userId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
-      required: false, // ✅ optional (guest support)
+      required: false, // guest support
     },
-
-    doctorId: {
+    doctorId:{
       type: mongoose.Schema.Types.ObjectId,
       ref: "Doctor",
-      default: null,
+      required: false, 
     },
-
-    // ✅ Guest info
+    // ✅ Guest booking fallback
     guest: {
       name: String,
       email: String,
@@ -47,7 +45,4 @@ const appointmentSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-export const Appointment = mongoose.model(
-  "Appointment",
-  appointmentSchema
-);
+export const Appointment = mongoose.model("Appointment", appointmentSchema);

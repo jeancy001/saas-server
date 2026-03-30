@@ -1,97 +1,81 @@
-import mongoose from "mongoose";
 import { Appointment } from "../models/appointement.model.js";
 
-/* CREATE */
+/* ---------------- CREATE APPOINTMENT ---------------- */
 export const createAppointment = async (req, res) => {
   try {
-    const { clinicId, doctorId, motif, date, guest } = req.body;
+    const { motif, date, guest } = req.body;
 
-    if (!clinicId || !motif || !date) {
+    if (!motif || !date) {
       return res.status(400).json({
         success: false,
         message: "Missing required fields",
       });
     }
 
-    if (!mongoose.Types.ObjectId.isValid(clinicId)) {
+    const clinicId = req.clinicId; // "en1rcy4q"
+    const userId = req.user?._id || null;
+    const doctorId = req.user?._id || null
+
+    if (!clinicId || typeof clinicId !== "string") {
       return res.status(400).json({
         success: false,
         message: "Invalid clinicId",
       });
     }
 
-    if (doctorId && !mongoose.Types.ObjectId.isValid(doctorId)) {
+    const appointmentDate = new Date(date);
+
+    if (isNaN(appointmentDate.getTime())) {
       return res.status(400).json({
         success: false,
-        message: "Invalid doctorId",
+        message: "Invalid date format",
       });
     }
 
-    const userId = req.user?._id || null;
-
-    // ✅ Guest validation
-    if (!userId) {
-      if (!guest || !guest.name || !guest.email) {
-        return res.status(400).json({
-          success: false,
-          message: "Guest name and email are required",
-        });
-      }
-    }
-
-    // ✅ Prevent past booking
-    const appointmentDate = new Date(date);
-    if (appointmentDate < new Date()) {
+    if (appointmentDate.getTime() < Date.now()) {
       return res.status(400).json({
         success: false,
         message: "Date cannot be in the past",
       });
     }
 
-    // ✅ Prevent duplicate booking (same doctor + same time)
-    if (doctorId) {
-      const exists = await Appointment.findOne({
-        doctorId,
-        date: appointmentDate,
+    if (!userId && (!guest?.name || !guest?.email)) {
+      return res.status(400).json({
+        success: false,
+        message: "Guest name and email are required",
       });
-
-      if (exists) {
-        return res.status(400).json({
-          success: false,
-          message: "This time slot is already booked",
-        });
-      }
     }
 
     const appointment = await Appointment.create({
-      clinicId,
+      clinicId, // STRING STORAGE
       userId,
-      doctorId: doctorId || null,
+      doctorId,
       motif,
       date: appointmentDate,
-      guest: !userId
-        ? {
+      guest: userId
+        ? undefined
+        : {
             name: guest.name,
             email: guest.email,
             phone: guest.phone || "",
-          }
-        : null,
+          },
       status: "pending",
     });
 
-    res.status(201).json({
+    return res.status(201).json({
       success: true,
       data: appointment,
     });
   } catch (err) {
     console.error("CREATE APPOINTMENT ERROR:", err);
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       message: "Server error",
     });
   }
 };
 
+/* ---------------- GET MY APPOINTMENTS ---------------- */
 export const getMyAppointments = async (req, res) => {
   try {
     if (!req.user?._id) {
@@ -102,72 +86,76 @@ export const getMyAppointments = async (req, res) => {
     }
 
     const appointments = await Appointment.find({
-      userId: req.user._id,
-    })
-      .populate("doctorId", "name specialty")
-      .sort({ date: -1 });
+      $or: [
+        { userId: req.user._id },
+        { "guest.email": req.user.email },
+      ],
+    }).sort({ date: -1 });
 
-    res.json({
+    return res.json({
       success: true,
       data: appointments,
     });
   } catch (err) {
     console.error("GET MY APPOINTMENTS ERROR:", err);
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       message: "Server error",
     });
   }
 };
 
+/* ---------------- GET CLINIC APPOINTMENTS ---------------- */
 export const getClinicAppointments = async (req, res) => {
   try {
-    const { clinicId } = req.params;
+    const clinicId = req.clinicId;
 
-    if (!mongoose.Types.ObjectId.isValid(clinicId)) {
+    if (!clinicId || typeof clinicId !== "string") {
       return res.status(400).json({
         success: false,
         message: "Invalid clinicId",
       });
     }
 
+    const page = Math.max(parseInt(req.query.page) || 1, 1);
+    const limit = Math.min(parseInt(req.query.limit) || 20, 100);
+
     const appointments = await Appointment.find({ clinicId })
       .populate("userId", "name email")
-      .populate("doctorId", "name specialty")
-      .sort({ date: -1 });
+      .sort({ date: -1 })
+      .skip((page - 1) * limit)
+      .limit(limit);
 
-    res.json({
+    return res.json({
       success: true,
       data: appointments,
+      pagination: { page, limit },
     });
   } catch (err) {
     console.error("GET CLINIC APPOINTMENTS ERROR:", err);
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       message: "Server error",
     });
   }
 };
 
+/* ---------------- UPDATE STATUS ---------------- */
 export const updateAppointmentStatus = async (req, res) => {
   try {
     const { id } = req.params;
     const { status } = req.body;
 
-    const allowedStatus = ["pending", "confirmed", "cancelled"];
+    const allowed = ["pending", "confirmed", "cancelled"];
 
-    if (!allowedStatus.includes(status)) {
+    if (!allowed.includes(status)) {
       return res.status(400).json({
         success: false,
         message: "Invalid status value",
       });
     }
 
-    const appointment = await Appointment.findByIdAndUpdate(
-      id,
-      { status },
-      { new: true }
-    );
+    const appointment = await Appointment.findById(id);
 
     if (!appointment) {
       return res.status(404).json({
@@ -176,23 +164,35 @@ export const updateAppointmentStatus = async (req, res) => {
       });
     }
 
-    res.json({
+    if (appointment.clinicId !== req.clinicId) {
+      return res.status(403).json({
+        success: false,
+        message: "Forbidden",
+      });
+    }
+
+    appointment.status = status;
+    await appointment.save();
+
+    return res.json({
       success: true,
       data: appointment,
     });
   } catch (err) {
     console.error("UPDATE STATUS ERROR:", err);
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       message: "Server error",
     });
   }
 };
+
+/* ---------------- DELETE APPOINTMENT ---------------- */
 export const deleteAppointment = async (req, res) => {
   try {
     const { id } = req.params;
 
-    const appointment = await Appointment.findByIdAndDelete(id);
+    const appointment = await Appointment.findById(id);
 
     if (!appointment) {
       return res.status(404).json({
@@ -201,13 +201,22 @@ export const deleteAppointment = async (req, res) => {
       });
     }
 
-    res.json({
+    if (appointment.clinicId !== req.clinicId) {
+      return res.status(403).json({
+        success: false,
+        message: "Forbidden",
+      });
+    }
+
+    await appointment.deleteOne();
+
+    return res.json({
       success: true,
       message: "Deleted successfully",
     });
   } catch (err) {
     console.error("DELETE APPOINTMENT ERROR:", err);
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       message: "Server error",
     });

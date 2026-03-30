@@ -122,3 +122,17 @@ Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2OGNkMjM3Z
 
 ###
 
+
+POST http://localhost:5000/api/v1/clinic/appointment/en1rcy4q
+Content-Type: application/json
+
+{
+  "motif": "Dental checkup",
+  "date": "2026-04-10T10:00:00.000Z",
+  "guest": {
+    "name": "John Doe",
+    "email": "john@example.com",
+    "phone": "+243812345678"
+  }
+}
+

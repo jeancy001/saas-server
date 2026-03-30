@@ -11,11 +11,9 @@ export const createDoctor = async (req, res) => {
       email,
       phone,
       specialty,
-      experience,
       clinicId,
-      availableDays,
-      availableHours,
-      avatar,
+      available = true,
+      availableMedicines = [],
     } = req.body;
 
     if (!name || !email || !specialty || !clinicId) {
@@ -32,24 +30,23 @@ export const createDoctor = async (req, res) => {
       });
     }
 
-    const exists = await Doctor.findOne({ email });
+    const exists = await Doctor.findOne({ email, clinicId });
+
     if (exists) {
       return res.status(400).json({
         success: false,
-        message: "Doctor already exists",
+        message: "Doctor already exists in this clinic",
       });
     }
 
     const doctor = await Doctor.create({
-      name,
-      email,
-      phone,
-      specialty,
-      experience,
+      name: name.trim(),
+      email: email.trim().toLowerCase(),
+      phone: phone?.trim(),
+      specialty: specialty.trim(),
       clinicId,
-      availableDays,
-      availableHours,
-      avatar,
+      available,
+      availableMedicines,
     });
 
     res.status(201).json({
@@ -66,11 +63,25 @@ export const createDoctor = async (req, res) => {
 };
 
 /* =========================
-   GET ALL DOCTORS
+   GET DOCTORS (SCOPED)
 ========================= */
 export const getDoctors = async (req, res) => {
   try {
-    const doctors = await Doctor.find()
+    const { clinicId } = req.query;
+
+    const filter = {};
+
+    if (clinicId) {
+      if (!mongoose.Types.ObjectId.isValid(clinicId)) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid clinicId",
+        });
+      }
+      filter.clinicId = clinicId;
+    }
+
+    const doctors = await Doctor.find(filter)
       .populate("clinicId", "name address")
       .sort({ createdAt: -1 });
 
@@ -140,9 +151,28 @@ export const updateDoctor = async (req, res) => {
       });
     }
 
-    const doctor = await Doctor.findByIdAndUpdate(id, req.body, {
-      new: true,
-    });
+    const updateData = { ...req.body };
+
+    if (updateData.email) {
+      updateData.email = updateData.email.trim().toLowerCase();
+    }
+
+    if (updateData.name) {
+      updateData.name = updateData.name.trim();
+    }
+
+    if (updateData.specialty) {
+      updateData.specialty = updateData.specialty.trim();
+    }
+
+    const doctor = await Doctor.findByIdAndUpdate(
+      id,
+      { $set: updateData },
+      {
+        new: true,
+        runValidators: true,
+      }
+    );
 
     if (!doctor) {
       return res.status(404).json({

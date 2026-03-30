@@ -17,7 +17,7 @@ Content-Type: application/json
   "username": "john",
   "email": "john@test.com",
   "password": "123456",
-  "clinicId": "65f1c2e8a1b23c0012345678",
+  "clinicId": ""
   "gender": "male",
   "tel": "0999999999",
   "country": "DRC",
