@@ -4,28 +4,63 @@ import { User } from "../models/user.model.js";
 /**
  * ---------------- GET TOKEN ----------------
  */
-const getTokenFromHeader = (req) => {
-  if (req.headers.authorization?.startsWith("Bearer")) {
+const getTokenFromRequest = (req) => {
+  // Authorization header
+  if (req.headers.authorization?.startsWith("Bearer ")) {
     return req.headers.authorization.split(" ")[1];
   }
+
+  // Cookie fallback
+  if (req.cookies?.accessToken) {
+    return req.cookies.accessToken;
+  }
+
   return null;
 };
 
 /**
- * ---------------- VERIFY ACCESS TOKEN (STRICT) ----------------
+ * ---------------- VERIFY ACCESS TOKEN ----------------
+ */
+const verifyAccessToken = (token) => {
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_ACCESS_SECRET);
+
+    // Ensure correct token type
+    if (decoded.type !== "access") {
+      throw new Error("INVALID_TOKEN_TYPE");
+    }
+
+    return { valid: true, decoded };
+  } catch (err) {
+    if (err.name === "TokenExpiredError") {
+      return { valid: false, error: "expired" };
+    }
+    return { valid: false, error: "invalid" };
+  }
+};
+
+/**
+ * ---------------- PROTECT ----------------
  */
 export const protect = async (req, res, next) => {
   try {
-    const token = getTokenFromHeader(req);
+    const token = getTokenFromRequest(req);
 
     if (!token) {
       return res.status(401).json({
         success: false,
-        message: "Non autorisé.",
+        message: "Token manquant.",
       });
     }
 
-    const decoded = jwt.verify(token, process.env.JWT_ACCESS_SECRET);
+    const { valid, decoded, error } = verifyAccessToken(token);
+
+    if (!valid) {
+      return res.status(401).json({
+        success: false,
+        message: error === "expired" ? "Token expiré." : "Token invalide.",
+      });
+    }
 
     const user = await User.findById(decoded._id).select(
       "-password -refreshToken"
@@ -34,7 +69,7 @@ export const protect = async (req, res, next) => {
     if (!user) {
       return res.status(401).json({
         success: false,
-        message: "Utilisateur invalide.",
+        message: "Utilisateur introuvable.",
       });
     }
 
@@ -45,45 +80,52 @@ export const protect = async (req, res, next) => {
       });
     }
 
+    // Attach user + auth meta
     req.user = user;
+    req.auth = {
+      userId: decoded._id,
+      role: decoded.role,
+    };
+
     next();
   } catch (error) {
-    return res.status(401).json({
+    console.error("AUTH ERROR:", error);
+
+    return res.status(500).json({
       success: false,
-      message: "Token invalide.",
+      message: "Erreur serveur auth.",
     });
   }
 };
 
 /**
- * ---------------- OPTIONAL AUTH (FIXED) ----------------
- * Works for guest + logged users
+ * ---------------- OPTIONAL AUTH ----------------
  */
 export const optionalAuth = async (req, res, next) => {
   try {
-    const token = getTokenFromHeader(req);
+    const token = getTokenFromRequest(req);
 
     if (!token) {
       req.user = null;
       return next();
     }
 
-    const decoded = jwt.verify(token, process.env.JWT_ACCESS_SECRET);
+    const { valid, decoded } = verifyAccessToken(token);
+
+    if (!valid) {
+      req.user = null;
+      return next();
+    }
 
     const user = await User.findById(decoded._id).select(
       "-password -refreshToken"
     );
 
-    // ✅ If user exists → attach full user
-    if (user && user.active) {
-      req.user = user;
-    } else {
-      req.user = null;
-    }
+    req.user = user && user.active ? user : null;
 
     next();
-  } catch (err) {
-    req.user = null; // ✅ never break guest flow
+  } catch {
+    req.user = null;
     next();
   }
 };
@@ -154,9 +196,11 @@ export const sameClinic = (model, field = "clinicId") => {
       req.resource = resource;
       next();
     } catch (error) {
+      console.error("CLINIC CHECK ERROR:", error);
+
       res.status(500).json({
         success: false,
-        message: error.message,
+        message: "Erreur serveur.",
       });
     }
   };
