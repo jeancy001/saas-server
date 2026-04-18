@@ -9,6 +9,7 @@ import {
   updateClinic,
   deleteClinic
 } from "../controllers/clinic.controller.js";
+import { resolveClinic } from "../middlewares/resolveClinic.middleware.js";
 
 const router = express.Router();
 
@@ -18,11 +19,11 @@ const upload = multer({ storage: multer.memoryStorage() });
 // -----------------------------
 // ROUTES
 // -----------------------------
-router.post("/create", upload.single("logo"), createClinic); // 'logo' field for file
+router.post("/create", upload.single("logo"),resolveClinic, createClinic); // 'logo' field for file
 router.get("/", getClinics);
-router.get("/:id", getClinicById);
+router.get("/:id",getClinicById);
 router.get("/clinic-link/:clinicId", getClinicByClinicId);
-router.put("/:id", upload.single("logo"), updateClinic); // allow updating logo
-router.delete("/:id", deleteClinic);
+router.put("/:id", upload.single("logo") ,updateClinic); // allow updating logo
+router.delete("/:id", resolveClinic, deleteClinic);
 
 export { router as clinicRouter };

@@ -7,21 +7,17 @@ import {
   deleteDoctor,
 } from "../controllers/doctor.controller.js";
 
+import { protect, adminOnly } from "../middlewares/auth.middleware.js";
+
 const router = express.Router();
 
-/* CREATE */
-router.post("/", createDoctor);
+// 🔐 Protected routes
+router.get("/doctors", protect, getDoctors);
+router.get("/:id", protect, getDoctorById);
 
-/* GET ALL */
-router.get("/", getDoctors);
+// 🔒 Admin only
+router.post("/", protect, adminOnly, createDoctor);
+router.put("/:id", protect, adminOnly, updateDoctor);
+router.delete("/:id", protect, adminOnly, deleteDoctor);
 
-/* GET ONE */
-router.get("/:id", getDoctorById);
-
-/* UPDATE */
-router.put("/:id", updateDoctor);
-
-/* DELETE */
-router.delete("/:id", deleteDoctor);
-
-export const doctorRouter = router;
+export {router as doctorRouter };

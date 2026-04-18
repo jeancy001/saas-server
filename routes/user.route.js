@@ -14,7 +14,7 @@ import {
   verifyOtp,
   refreshAccessToken
 } from "../controllers/user.Controller.js";
-import {protect} from "../middlewares/auth.middleware.js";
+import { protect } from "../middlewares/auth.middleware.js";
 import { upload } from "../middlewares/upload.js";
 const router = express.Router();
 
@@ -22,7 +22,7 @@ const router = express.Router();
 //routes Public
 router.post("/register", register);
 router.post("/login", userLogin);
-router.post("/refresh-token", refreshAccessToken);
+router.post("/refresh", refreshAccessToken);
 router.post("/verify-otp", verifyOtp); // Route pour vérifier l'OTP
 router.post("/request-code", requestCode);
 router.post("/reset-password", resetPassword);

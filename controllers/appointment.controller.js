@@ -3,19 +3,20 @@ import { Appointment } from "../models/appointement.model.js";
 /* ---------------- CREATE APPOINTMENT ---------------- */
 export const createAppointment = async (req, res) => {
   try {
-    const { motif, date, guest } = req.body;
+    const {
+      motif,
+      date,
+      guest,
+      paymentMode = "later",
+      paymentReference,
+      doctorId,
+      phone: bodyPhone,
+    } = req.body;
 
-    if (!motif || !date) {
-      return res.status(400).json({
-        success: false,
-        message: "Missing required fields",
-      });
-    }
-
-    const clinicId = req.clinicId; // "en1rcy4q"
+    const clinicId = req.clinicId;
     const userId = req.user?._id || null;
-    const doctorId = req.user?._id || null
 
+    /* ---------------- VALIDATION ---------------- */
     if (!clinicId || typeof clinicId !== "string") {
       return res.status(400).json({
         success: false,
@@ -25,7 +26,7 @@ export const createAppointment = async (req, res) => {
 
     const appointmentDate = new Date(date);
 
-    if (isNaN(appointmentDate.getTime())) {
+    if (!date || isNaN(appointmentDate.getTime())) {
       return res.status(400).json({
         success: false,
         message: "Invalid date format",
@@ -39,6 +40,21 @@ export const createAppointment = async (req, res) => {
       });
     }
 
+    /* ---------------- PHONE FIX (IMPORTANT) ---------------- */
+    const phone =
+      req.user?.phone ||
+      guest?.phone ||
+      bodyPhone ||
+      null;
+
+    if (!phone || !phone.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: "Phone number is required",
+      });
+    }
+
+    /* ---------------- GUEST VALIDATION ---------------- */
     if (!userId && (!guest?.name || !guest?.email)) {
       return res.status(400).json({
         success: false,
@@ -46,20 +62,36 @@ export const createAppointment = async (req, res) => {
       });
     }
 
+    /* ---------------- PAYMENT VALIDATION ---------------- */
+    if (paymentMode === "now" && !paymentReference) {
+      return res.status(400).json({
+        success: false,
+        message: "Payment required before booking",
+      });
+    }
+
+    /* ---------------- CREATE APPOINTMENT ---------------- */
     const appointment = await Appointment.create({
-      clinicId, // STRING STORAGE
+      clinicId,
       userId,
-      doctorId,
-      motif,
+      doctorId: doctorId || null,
+      motif: motif || "",
       date: appointmentDate,
+
+      paymentMode,
+      paymentReference:
+        paymentMode === "now" ? paymentReference : null,
+
+      status:
+        paymentMode === "later" ? "pending" : "confirmed",
+
       guest: userId
         ? undefined
         : {
-            name: guest.name,
-            email: guest.email,
-            phone: guest.phone || "",
+            name: guest?.name || "",
+            email: guest?.email || "",
+            phone,
           },
-      status: "pending",
     });
 
     return res.status(201).json({
@@ -121,7 +153,7 @@ export const getClinicAppointments = async (req, res) => {
     const limit = Math.min(parseInt(req.query.limit) || 20, 100);
 
     const appointments = await Appointment.find({ clinicId })
-      .populate("userId", "name email")
+      .populate("userId", "name email phone")
       .sort({ date: -1 })
       .skip((page - 1) * limit)
       .limit(limit);

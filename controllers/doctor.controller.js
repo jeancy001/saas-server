@@ -1,36 +1,69 @@
 import mongoose from "mongoose";
 import { Doctor } from "../models/doctor.model.js";
+import { Clinic } from "../models/clinic.model.js";
 
 /* =========================
-   CREATE DOCTOR
+   NORMALIZE CLINIC ID (SAFE + FALLBACK)
+========================= */
+const resolveClinicId = async (clinicId) => {
+  if (!clinicId) return null;
+
+  // 1. Try slug first
+  let clinic = await Clinic.findOne({ clinicId });
+
+  if (clinic) return clinic.clinicId;
+
+  // 2. Fallback ObjectId (old system support)
+  if (mongoose.Types.ObjectId.isValid(clinicId)) {
+    const byId = await Clinic.findById(clinicId);
+
+    if (byId) {
+      // 🔥 auto-fix future requests (optional but powerful)
+      return byId.clinicId;
+    }
+  }
+
+  return null;
+};
+
+/* =========================
+   SAFE CLINIC EXTRACTOR (NEW 🔥)
+========================= */
+const getClinicFromRequest = async (req) => {
+  const rawClinicId = req.user?.clinicId;
+
+  if (!rawClinicId) return null;
+
+  return await resolveClinicId(rawClinicId);
+};
+
+/* =========================
+   CREATE DOCTOR (ADMIN ONLY)
 ========================= */
 export const createDoctor = async (req, res) => {
   try {
-    const {
-      name,
-      email,
-      phone,
-      specialty,
-      clinicId,
-      available = true,
-      availableMedicines = [],
-    } = req.body;
+    const clinicId = await getClinicFromRequest(req); // 🔥 FIXED
 
-    if (!name || !email || !specialty || !clinicId) {
+    const { name, email, phone, specialty, available = true, availableMedicines = [] } = req.body;
+
+    if (!name || !email || !specialty) {
       return res.status(400).json({
         success: false,
         message: "Missing required fields",
       });
     }
 
-    if (!mongoose.Types.ObjectId.isValid(clinicId)) {
-      return res.status(400).json({
+    if (!clinicId) {
+      return res.status(401).json({
         success: false,
-        message: "Invalid clinicId",
+        message: "Clinic session expired. Please login again.",
       });
     }
 
-    const exists = await Doctor.findOne({ email, clinicId });
+    const exists = await Doctor.findOne({
+      email: email.trim().toLowerCase(),
+      clinicId,
+    });
 
     if (exists) {
       return res.status(400).json({
@@ -44,18 +77,18 @@ export const createDoctor = async (req, res) => {
       email: email.trim().toLowerCase(),
       phone: phone?.trim(),
       specialty: specialty.trim(),
-      clinicId,
+      clinicId, // ✅ always slug
       available,
       availableMedicines,
     });
 
-    res.status(201).json({
+    return res.status(201).json({
       success: true,
       data: doctor,
     });
   } catch (err) {
     console.error("CREATE DOCTOR ERROR:", err);
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       message: "Server error",
     });
@@ -63,35 +96,22 @@ export const createDoctor = async (req, res) => {
 };
 
 /* =========================
-   GET DOCTORS (SCOPED)
+   GET DOCTORS
 ========================= */
 export const getDoctors = async (req, res) => {
   try {
-    const { clinicId } = req.query;
-
-    const filter = {};
-
-    if (clinicId) {
-      if (!mongoose.Types.ObjectId.isValid(clinicId)) {
-        return res.status(400).json({
-          success: false,
-          message: "Invalid clinicId",
-        });
-      }
-      filter.clinicId = clinicId;
-    }
-
-    const doctors = await Doctor.find(filter)
-      .populate("clinicId", "name address")
+    const doctors = await Doctor.find()
+      .populate("clinicId", "name clinicId logo")
       .sort({ createdAt: -1 });
 
-    res.json({
+    return res.status(200).json({
       success: true,
+      count: doctors.length,
       data: doctors,
     });
   } catch (err) {
     console.error("GET DOCTORS ERROR:", err);
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       message: "Server error",
     });
@@ -104,6 +124,14 @@ export const getDoctors = async (req, res) => {
 export const getDoctorById = async (req, res) => {
   try {
     const { id } = req.params;
+    const clinicId = await getClinicFromRequest(req);
+
+    if (!clinicId) {
+      return res.status(401).json({
+        success: false,
+        message: "Invalid session",
+      });
+    }
 
     if (!mongoose.Types.ObjectId.isValid(id)) {
       return res.status(400).json({
@@ -112,10 +140,7 @@ export const getDoctorById = async (req, res) => {
       });
     }
 
-    const doctor = await Doctor.findById(id).populate(
-      "clinicId",
-      "name address"
-    );
+    const doctor = await Doctor.findOne({ _id: id, clinicId });
 
     if (!doctor) {
       return res.status(404).json({
@@ -124,13 +149,13 @@ export const getDoctorById = async (req, res) => {
       });
     }
 
-    res.json({
+    return res.json({
       success: true,
       data: doctor,
     });
   } catch (err) {
     console.error("GET DOCTOR ERROR:", err);
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       message: "Server error",
     });
@@ -143,6 +168,14 @@ export const getDoctorById = async (req, res) => {
 export const updateDoctor = async (req, res) => {
   try {
     const { id } = req.params;
+    const clinicId = await getClinicFromRequest(req);
+
+    if (!clinicId) {
+      return res.status(401).json({
+        success: false,
+        message: "Invalid session",
+      });
+    }
 
     if (!mongoose.Types.ObjectId.isValid(id)) {
       return res.status(400).json({
@@ -153,25 +186,14 @@ export const updateDoctor = async (req, res) => {
 
     const updateData = { ...req.body };
 
-    if (updateData.email) {
-      updateData.email = updateData.email.trim().toLowerCase();
-    }
+    if (updateData.email) updateData.email = updateData.email.trim().toLowerCase();
+    if (updateData.name) updateData.name = updateData.name.trim();
+    if (updateData.specialty) updateData.specialty = updateData.specialty.trim();
 
-    if (updateData.name) {
-      updateData.name = updateData.name.trim();
-    }
-
-    if (updateData.specialty) {
-      updateData.specialty = updateData.specialty.trim();
-    }
-
-    const doctor = await Doctor.findByIdAndUpdate(
-      id,
+    const doctor = await Doctor.findOneAndUpdate(
+      { _id: id, clinicId },
       { $set: updateData },
-      {
-        new: true,
-        runValidators: true,
-      }
+      { new: true }
     );
 
     if (!doctor) {
@@ -181,13 +203,13 @@ export const updateDoctor = async (req, res) => {
       });
     }
 
-    res.json({
+    return res.json({
       success: true,
       data: doctor,
     });
   } catch (err) {
     console.error("UPDATE DOCTOR ERROR:", err);
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       message: "Server error",
     });
@@ -200,6 +222,14 @@ export const updateDoctor = async (req, res) => {
 export const deleteDoctor = async (req, res) => {
   try {
     const { id } = req.params;
+    const clinicId = await getClinicFromRequest(req);
+
+    if (!clinicId) {
+      return res.status(401).json({
+        success: false,
+        message: "Invalid session",
+      });
+    }
 
     if (!mongoose.Types.ObjectId.isValid(id)) {
       return res.status(400).json({
@@ -208,7 +238,7 @@ export const deleteDoctor = async (req, res) => {
       });
     }
 
-    const doctor = await Doctor.findByIdAndDelete(id);
+    const doctor = await Doctor.findOneAndDelete({ _id: id, clinicId });
 
     if (!doctor) {
       return res.status(404).json({
@@ -217,13 +247,13 @@ export const deleteDoctor = async (req, res) => {
       });
     }
 
-    res.json({
+    return res.json({
       success: true,
       message: "Doctor deleted successfully",
     });
   } catch (err) {
     console.error("DELETE DOCTOR ERROR:", err);
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       message: "Server error",
     });

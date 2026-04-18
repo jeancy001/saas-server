@@ -1,35 +1,38 @@
 import { Clinic } from "../models/clinic.model.js";
 
 /**
- * Resolves clinic from:
- * - params (:clinicId or :id)
- * - body (clinicId)
- * - query (?clinicId=)
- * - user context (req.user.clinicId)
+ * Clinic resolver (multi-source + slug-based SaaS routing)
  *
- * Supports STRING SLUGS like: "en1rcy4q"
+ * Sources priority:
+ * 1. req.params.clinicId
+ * 2. req.params.id
+ * 3. req.query.clinicId
+ * 4. req.body.clinicId
+ * 5. req.user.clinicId
  */
 export const resolveClinic = async (req, res, next) => {
   try {
-    const rawClinicId =
-      req.params.clinicId ||
-      req.params.id ||
-      req.body.clinicId ||
-      req.query.clinicId ||
-      req.user?.clinicId ||
-      null;
+    // avoid double resolution (performance optimization)
+    if (req.clinic) return next();
 
-    if (!rawClinicId || typeof rawClinicId !== "string") {
+    const rawClinicId =
+      req.params?.clinicId ||
+      req.params?.id ||
+      req.query?.clinicId ||
+      req.body?.clinicId ||
+      req.user?.clinicId;
+
+    if (!rawClinicId) {
       return res.status(400).json({
         success: false,
         message: "clinicId is required",
       });
     }
 
-    const clinicId = rawClinicId.trim().toLowerCase();
+    const clinicId = String(rawClinicId).trim().toLowerCase();
 
-    // optional: light validation for slug format
-    const isValidSlug = /^[a-z0-9]{4,30}$/.test(clinicId);
+    // strict slug validation (safe SaaS tenant key)
+    const isValidSlug = /^[a-z0-9]{4,32}$/.test(clinicId);
 
     if (!isValidSlug) {
       return res.status(400).json({
@@ -38,7 +41,7 @@ export const resolveClinic = async (req, res, next) => {
       });
     }
 
-    // IMPORTANT: now using slug lookup, NOT ObjectId
+    // lookup by PUBLIC slug (NOT ObjectId)
     const clinic = await Clinic.findOne({ clinicId });
 
     if (!clinic) {
@@ -48,12 +51,14 @@ export const resolveClinic = async (req, res, next) => {
       });
     }
 
+    // attach resolved tenant
     req.clinic = clinic;
-    req.clinicId = clinic.clinicId; // keep STRING, not _id
+    req.clinicId = clinic.clinicId;
 
-    next();
+    return next();
   } catch (err) {
     console.error("resolveClinic error:", err);
+
     return res.status(500).json({
       success: false,
       message: "Failed to resolve clinic",

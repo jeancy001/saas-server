@@ -16,7 +16,10 @@ import {
   verifyOTP,
 } from "../utils/otpUtils.js";
 
-import { supabase } from "../utils/supabase.js";
+import {
+  uploadImage,
+  deleteImage,
+} from "../services/supabaseStorage.js";
 
 /* ---------------- CONFIG ---------------- */
 
@@ -44,64 +47,129 @@ const clearRefreshCookie = (res) => {
 
 /* ---------------- HELPERS ---------------- */
 
-const populateClinic = (query) =>
-  query.populate("clinicId", "name clinicId logo");
+// ✅ robust clinic resolver (slug + auto-fix ObjectId)
+const attachClinic = async (user) => {
+  if (!user?.clinicId) {
+    return { ...user.toObject(), clinic: null };
+  }
 
+  let clinic = null;
+  let finalClinicId = user.clinicId;
+
+  // ✅ CASE 1: already slug
+  clinic = await Clinic.findOne({ clinicId: user.clinicId });
+
+  // ✅ CASE 2: old ObjectId → FIX IT automatically
+  if (!clinic && mongoose.Types.ObjectId.isValid(user.clinicId)) {
+    const clinicById = await Clinic.findById(user.clinicId);
+
+    if (clinicById) {
+      clinic = clinicById;
+
+      // 🔥 AUTO-MIGRATION (IMPORTANT)
+      finalClinicId = clinicById.clinicId;
+
+      await User.findByIdAndUpdate(user._id, {
+        clinicId: clinicById.clinicId,
+      });
+    }
+  }
+
+  return {
+    ...user.toObject(),
+
+    // ✅ ALWAYS return slug (FIXED)
+    clinicId: finalClinicId,
+
+    clinic: clinic
+      ? {
+          clinicId: clinic.clinicId,
+          name: clinic.name,
+          logo: clinic.logo,
+        }
+      : null,
+  };
+};
+
+// ✅ consistent response (always correct)
 const sanitizeUser = (user) => ({
   _id: user._id,
   username: user.username,
   email: user.email,
   role: user.role,
-  clinicId: user.clinicId?._id || null,
-  clinic: user.clinicId || null,
+
+  // ✅ GUARANTEED SLUG
+  clinicId: user.clinicId,
+
+  clinic: user.clinic || null,
+
   profileUrl: user.profileUrl || null,
   isVerified: user.isVerified,
 });
-
 /* ---------------- REGISTER ---------------- */
 
 export const register = async (req, res) => {
   try {
-    const { email, password, clinicId } = req.body;
+    let { email, username, password, clinicId, ...optional } = req.body;
 
-    if (!email || !password || !clinicId) {
-      return res.status(400).json({ success: false, message: "Missing fields" });
+    email = email?.toLowerCase().trim();
+    username = username?.trim();
+    clinicId = clinicId?.toLowerCase().trim();
+
+    const errors = {};
+    if (!email) errors.email = "Email required";
+    if (!username) errors.username = "Username required";
+    if (!password) errors.password = "Password required";
+    if (!clinicId) errors.clinicId = "Clinic required";
+
+    if (password && password.length < 6) {
+      errors.password = "Min 6 characters";
     }
 
-    const query = [];
-
-    if (mongoose.Types.ObjectId.isValid(clinicId)) {
-      query.push({ _id: clinicId });
+    if (Object.keys(errors).length) {
+      return res.status(400).json({ success: false, errors });
     }
 
-    query.push({ clinicId: clinicId.toLowerCase() });
-
-    const clinic = await Clinic.findOne({ $or: query });
+    const clinic =
+      (await Clinic.findOne({ clinicId })) ||
+      (mongoose.Types.ObjectId.isValid(clinicId)
+        ? await Clinic.findById(clinicId)
+        : null);
 
     if (!clinic) {
-      return res.status(404).json({ success: false, message: "Clinic not found" });
+      return res.status(404).json({
+        success: false,
+        message: "Invalid clinic link",
+      });
     }
 
-    const exist = await User.findOne({ email });
+    const exist = await User.findOne({
+      email,
+      clinicId: clinic.clinicId,
+    });
+
     if (exist) {
-      return res.status(409).json({ success: false, message: "Email exists" });
+      return res.status(409).json({
+        success: false,
+        message: "User already exists for this clinic",
+      });
     }
 
     const user = await User.create({
-      ...req.body,
+      email,
+      username,
       password: await bcrypt.hash(password, 10),
-      clinicId: clinic._id,
+      clinicId: clinic.clinicId, // ✅ store slug
+      ...optional,
     });
 
     await generateAndSendOTP(email, "registration");
 
-    const populated = await populateClinic(
-      User.findById(user._id)
-    );
+    const resultUser = await attachClinic(user);
 
     return res.status(201).json({
       success: true,
-      user: sanitizeUser(populated),
+      user: sanitizeUser(resultUser),
     });
   } catch (err) {
     console.error("REGISTER:", err);
@@ -115,34 +183,28 @@ export const userLogin = async (req, res) => {
   try {
     const { email, password } = req.body;
 
-    const user = await populateClinic(
-      User.findOne({ email }).select("+password")
-    );
+    let user = await User.findOne({ email }).select("+password");
 
-    if (!user) {
-      return res.status(404).json({ success: false });
-    }
+    if (!user) return res.status(404).json({ success: false });
 
     const match = await bcrypt.compare(password, user.password);
-
-    if (!match) {
-      return res.status(401).json({ success: false });
-    }
+    if (!match) return res.status(401).json({ success: false });
 
     if (!user.isVerified) {
       await generateAndSendOTP(email, "login");
       return res.status(403).json({ success: false, requiresOtp: true });
     }
 
+    user = await attachClinic(user);
+
     const accessToken = generateAccessToken(user);
     const refreshToken = generateRefreshToken(user);
 
-    user.refreshToken = refreshToken;
-    await user.save();
+    await User.findByIdAndUpdate(user._id, { refreshToken });
 
     setRefreshCookie(res, refreshToken);
 
-    return res.status(200).json({
+    return res.json({
       success: true,
       accessToken,
       user: sanitizeUser(user),
@@ -157,15 +219,15 @@ export const userLogin = async (req, res) => {
 
 export const getMe = async (req, res) => {
   try {
-    const user = await populateClinic(
-      User.findById(req.user._id).select("-password -refreshToken")
+    let user = await User.findById(req.user._id).select(
+      "-password -refreshToken"
     );
 
-    if (!user) {
-      return res.status(404).json({ success: false });
-    }
+    if (!user) return res.status(404).json({ success: false });
 
-    return res.status(200).json({
+    user = await attachClinic(user);
+
+    return res.json({
       success: true,
       user: sanitizeUser(user),
     });
@@ -179,13 +241,9 @@ export const getMe = async (req, res) => {
 export const refreshAccessToken = async (req, res) => {
   try {
     const token = req.cookies.refreshToken;
-
-    if (!token) {
-      return res.status(401).json({ success: false });
-    }
+    if (!token) return res.status(401).json({ success: false });
 
     let decoded;
-
     try {
       decoded = jwt.verify(token, process.env.JWT_REFRESH_SECRET);
     } catch {
@@ -204,12 +262,11 @@ export const refreshAccessToken = async (req, res) => {
 
     setRefreshCookie(res, newRefreshToken);
 
-    return res.status(200).json({
+    return res.json({
       success: true,
       accessToken: generateAccessToken(user),
     });
-  } catch (err) {
-    console.error("REFRESH:", err);
+  } catch {
     return res.status(403).json({ success: false });
   }
 };
@@ -223,13 +280,15 @@ export const logout = async (req, res) => {
     if (token) {
       try {
         const decoded = jwt.verify(token, process.env.JWT_REFRESH_SECRET);
-        await User.findByIdAndUpdate(decoded._id, { refreshToken: null });
+        await User.findByIdAndUpdate(decoded._id, {
+          refreshToken: null,
+        });
       } catch {}
     }
 
     clearRefreshCookie(res);
 
-    return res.status(200).json({ success: true });
+    return res.json({ success: true });
   } catch {
     return res.status(500).json({ success: false });
   }
@@ -239,11 +298,13 @@ export const logout = async (req, res) => {
 
 export const getProfiles = async (req, res) => {
   try {
-    const users = await populateClinic(
-      User.find({ clinicId: req.user.clinicId }).select("-password -refreshToken")
-    );
+    let users = await User.find({
+      clinicId: req.user.clinicId,
+    }).select("-password -refreshToken");
 
-    return res.status(200).json({
+    users = await Promise.all(users.map(attachClinic));
+
+    return res.json({
       success: true,
       users: users.map(sanitizeUser),
     });
@@ -256,29 +317,28 @@ export const getProfiles = async (req, res) => {
 
 export const updateProfile = async (req, res) => {
   try {
+    const current = await User.findById(req.user._id);
+
     const updates = { ...req.body };
 
     if (req.file) {
-      const path = `users/${Date.now()}_${req.file.originalname}`;
-
-      const { data, error } = await supabase.storage
-        .from("profile-images")
-        .upload(path, req.file.buffer, { upsert: true });
-
-      if (error) {
-        return res.status(500).json({ success: false });
+      if (current.profileUrl) {
+        await deleteImage(current.profileUrl);
       }
 
-      updates.profileUrl = `${process.env.SUPABASE_URL}/storage/v1/object/public/profile-images/${data.path}`;
+      const { url } = await uploadImage(req.file, "users", true);
+      updates.profileUrl = url;
     }
 
-    const user = await populateClinic(
-      User.findByIdAndUpdate(req.user._id, updates, {
-        new: true,
-      }).select("-password -refreshToken")
-    );
+    let user = await User.findByIdAndUpdate(
+      req.user._id,
+      updates,
+      { new: true }
+    ).select("-password -refreshToken");
 
-    return res.status(200).json({
+    user = await attachClinic(user);
+
+    return res.json({
       success: true,
       user: sanitizeUser(user),
     });
@@ -293,21 +353,19 @@ export const updatePassword = async (req, res) => {
   try {
     const user = await User.findById(req.user._id).select("+password");
 
-    const isMatch = await bcrypt.compare(
+    const match = await bcrypt.compare(
       req.body.currentPassword,
       user.password
     );
 
-    if (!isMatch) {
-      return res.status(401).json({ success: false });
-    }
+    if (!match) return res.status(401).json({ success: false });
 
     user.password = await bcrypt.hash(req.body.newPassword, 10);
     await user.save();
 
-    await sendEmail(user.email, "Password updated", "Changed successfully");
+    await sendEmail(user.email, "Password updated", "Success");
 
-    return res.status(200).json({ success: true });
+    return res.json({ success: true });
   } catch {
     return res.status(500).json({ success: false });
   }
@@ -329,11 +387,10 @@ export const resetPassword = async (req, res) => {
     }
 
     const user = result.user;
-
     user.password = await bcrypt.hash(req.body.newPassword, 10);
     await user.save();
 
-    return res.status(200).json({ success: true });
+    return res.json({ success: true });
   } catch {
     return res.status(500).json({ success: false });
   }
@@ -360,7 +417,7 @@ export const verifyOtp = async (req, res) => {
       await user.save();
     }
 
-    return res.status(200).json({ success: true });
+    return res.json({ success: true });
   } catch {
     return res.status(500).json({ success: false });
   }
@@ -378,6 +435,13 @@ export const resendOtp = requestCode;
 /* ---------------- DELETE ---------------- */
 
 export const deleteProfile = async (req, res) => {
+  const user = await User.findById(req.user._id);
+
+  if (user?.profileUrl) {
+    await deleteImage(user.profileUrl);
+  }
+
   await User.findByIdAndDelete(req.user._id);
+
   res.json({ success: true });
 };

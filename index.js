@@ -12,6 +12,7 @@ import { userRoutes } from "./routes/user.route.js";
 import { doctorRouter } from "./routes/doctor.route.js";
 import { appointmentRoutes } from "./routes/appointement.route.js";
 import { contactRoute } from "./routes/contact.route.js";
+import { paymentRoute } from "./routes/payment.route.js";
 const app = express();
 const PORT = process.env.PORT || 5000;
 
@@ -88,6 +89,7 @@ app.use("/api/v1/clinic", clinicRouter);
 app.use("/api/v1/clinic/appointment", appointmentRoutes);
 app.use("/api/v1/clinic/doctor", doctorRouter);
 app.use("/api/v1/clinic/contact", contactRoute);
+app.use("/api/v1/clinic/payments", paymentRoute);
 
 /* ----------------------------- */
 /* 404 */

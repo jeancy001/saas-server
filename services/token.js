@@ -13,6 +13,7 @@ const generateAccessToken = (user) => {
       _id: user._id,
       role: user.role,
       email: user.email,
+      clinicId: user.clinicId,
       type: "access",
     },
     process.env.JWT_ACCESS_SECRET,
@@ -30,6 +31,8 @@ const generateRefreshToken = (user) => {
   return jwt.sign(
     {
       _id: user._id,
+      role:user.role,
+      clinicId: user.clinicId,
       type: "refresh",
     },
     process.env.JWT_REFRESH_SECRET,

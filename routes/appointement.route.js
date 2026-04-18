@@ -7,15 +7,15 @@ import {
   deleteAppointment,
 } from "../controllers/appointment.controller.js";
 
-import { protect, optionalAuth } from "../middlewares/auth.middleware.js";
-import { resolveClinic } from "../middlewares/resolveClinic.middleware.js";
+import { protect, optionalProtect} from "../middlewares/auth.middleware.js";
+import { resolveClinic ,} from "../middlewares/resolveClinic.middleware.js";
 
 const router = express.Router();
 
 /* ---------------- CREATE APPOINTMENT (guest + user) ---------------- */
 router.post(
   "/:clinicId",
-  optionalAuth,
+   optionalProtect,
   resolveClinic,
   createAppointment
 );
