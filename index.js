@@ -1,5 +1,7 @@
 import express from "express";
 import "dotenv/config";
+import http from "http";
+import { Server } from "socket.io";
 import cors from "cors";
 import cookieParser from "cookie-parser";
 import helmet from "helmet";
@@ -7,83 +9,42 @@ import morgan from "morgan";
 
 import { clinicRouter } from "./routes/clinic.route.js";
 import { connectDB } from "./config/db.js";
-
 import { userRoutes } from "./routes/user.route.js";
 import { doctorRouter } from "./routes/doctor.route.js";
 import { appointmentRoutes } from "./routes/appointement.route.js";
 import { contactRoute } from "./routes/contact.route.js";
 import { paymentRoute } from "./routes/payment.route.js";
+
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-/* ----------------------------- */
-/* TRUST PROXY */
-/* ----------------------------- */
-app.set("trust proxy", 1);
+/* ---------------- HTTP SERVER ---------------- */
+const server = http.createServer(app);
 
-/* ----------------------------- */
-/* SECURITY */
-/* ----------------------------- */
+/* ---------------- SOCKET.IO ---------------- */
+const io = new Server(server, {
+  cors: {
+    origin: [
+      process.env.CLIENT_URL,
+      "http://localhost:3000",
+    ],
+    credentials: true,
+  },
+});
+
+/* ---------------- SECURITY ---------------- */
 app.use(helmet());
 app.use(morgan("dev"));
 
-/* ----------------------------- */
-/* CORS */
-/* ----------------------------- */
+/* ---------------- CORS ---------------- */
+app.use(cors({ origin: true, credentials: true }));
+app.options(/.*/, cors());
 
-const allowedOrigins = [
-  process.env.CLIENT_URL,
-  "http://localhost:3000",
-].filter(Boolean);
-
-const corsOptions = {
-  origin: (origin, callback) => {
-    // allow Postman / mobile apps / server calls
-    if (!origin) return callback(null, true);
-
-    if (allowedOrigins.includes(origin)) {
-      return callback(null, true);
-    }
-
-    console.warn("Blocked CORS:", origin);
-
-    return callback(new Error("Not allowed by CORS"));
-  },
-  credentials: true,
-};
-
-app.use(cors(corsOptions));
-
-/* ✅ FIX FOR EXPRESS 5 */
-app.options(/.*/, cors(corsOptions));
-
-/* ----------------------------- */
-/* BODY + COOKIES */
-/* ----------------------------- */
-
-app.use(express.json({ limit: "10mb" }));
-app.use(express.urlencoded({ extended: true }));
+/* ---------------- BODY ---------------- */
+app.use(express.json());
 app.use(cookieParser());
 
-/* ----------------------------- */
-/* ROUTES */
-/* ----------------------------- */
-
-app.get("/", (req, res) => {
-  res.status(200).json({
-    success: true,
-    message: "API running",
-  });
-});
-
-app.get("/health", (req, res) => {
-  res.status(200).json({
-    success: true,
-    message: "OK",
-  });
-});
-
-/* API */
+/* ---------------- ROUTES ---------------- */
 app.use("/api/v1/auth", userRoutes);
 app.use("/api/v1/clinic", clinicRouter);
 app.use("/api/v1/clinic/appointment", appointmentRoutes);
@@ -91,54 +52,58 @@ app.use("/api/v1/clinic/doctor", doctorRouter);
 app.use("/api/v1/clinic/contact", contactRoute);
 app.use("/api/v1/clinic/payments", paymentRoute);
 
-/* ----------------------------- */
-/* 404 */
-/* ----------------------------- */
-app.use((req, res) => {
-  res.status(404).json({
-    success: false,
-    message: "Route not found",
+/* ---------------- SOCKET ROOM SYSTEM ---------------- */
+const rooms = {};
+
+io.on("connection", (socket) => {
+  console.log("User connected:", socket.id);
+
+  socket.on("join-room", ({ roomId }) => {
+    socket.join(roomId);
+
+    if (!rooms[roomId]) rooms[roomId] = [];
+
+    rooms[roomId].push(socket.id);
+
+    socket.to(roomId).emit("user-joined", socket.id);
+    socket.emit("all-users", rooms[roomId]);
   });
-});
 
-/* ----------------------------- */
-/* GLOBAL ERROR HANDLER */
-/* ----------------------------- */
-app.use((err, req, res, next) => {
-  console.error("Global Error:", err.message);
-
-  // Handle CORS errors cleanly
-  if (err.message === "Not allowed by CORS") {
-    return res.status(403).json({
-      success: false,
-      message: "CORS error: origin not allowed",
+  socket.on("offer", (payload) => {
+    io.to(payload.target).emit("offer", {
+      sdp: payload.sdp,
+      caller: socket.id,
     });
-  }
+  });
 
-  res.status(err.statusCode || 500).json({
-    success: false,
-    message:
-      process.env.NODE_ENV === "production"
-        ? "Internal Server Error"
-        : err.message,
+  socket.on("answer", (payload) => {
+    io.to(payload.target).emit("answer", {
+      sdp: payload.sdp,
+      caller: socket.id,
+    });
+  });
+
+  socket.on("ice-candidate", (payload) => {
+    io.to(payload.target).emit("ice-candidate", {
+      candidate: payload.candidate,
+      caller: socket.id,
+    });
+  });
+
+  socket.on("disconnect", () => {
+    for (const roomId in rooms) {
+      rooms[roomId] = rooms[roomId].filter((id) => id !== socket.id);
+    }
   });
 });
 
-/* ----------------------------- */
-/* SERVER START */
-/* ----------------------------- */
-
+/* ---------------- START SERVER ---------------- */
 const startServer = async () => {
-  try {
-    await connectDB();
+  await connectDB();
 
-    app.listen(PORT, () => {
-      console.log(`🚀 Server running on http://localhost:${PORT}`);
-    });
-  } catch (error) {
-    console.error("❌ Startup failed:", error);
-    process.exit(1);
-  }
+  server.listen(PORT, () => {
+    console.log(`🚀 Server running on http://localhost:${PORT}`);
+  });
 };
 
 startServer();
